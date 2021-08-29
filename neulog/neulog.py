@@ -2,6 +2,7 @@ import serial
 import platform
 import time
 import os
+import asyncio
 from serial.tools.list_ports import comports
 
 MAX_TYPE = 0x22
@@ -96,6 +97,16 @@ class Device(serial.Serial):
             return r
         return False
 
+    async def receiveAio(self, i = False):
+        await asyncio.sleep(0.02)
+        iw = self.inWaiting()
+        if False == i: i = iw
+        if iw >= i:
+            #print "reading %i out of %i" % (i, iw)
+            r = self.read(i)
+            return r
+        return False
+
     def connect(self):
         self.close()
         self.open()
@@ -167,6 +178,16 @@ class Device(serial.Serial):
             stype = DEVICE_TYPES.index(stype) + 1
         self.send(bytes([STX, stype, sid, IN_READ, 0, 0, 0]), True)
         r = self.receive()
+        if not r or STX != r[0] or IN_READ != r[3]: return False
+        if r[-1] != sum(r[:-1]) % 256: return False
+        return bcd(r[4:7])
+
+    async def getSensorsDataAio(self, stype, sid):
+        if self.status != 'connected': return False
+        if isinstance(stype, str):
+            stype = DEVICE_TYPES.index(stype) + 1
+        self.send(bytes([STX, stype, sid, IN_READ, 0, 0, 0]), True)
+        r = self.receiveAio()
         if not r or STX != r[0] or IN_READ != r[3]: return False
         if r[-1] != sum(r[:-1]) % 256: return False
         return bcd(r[4:7])
