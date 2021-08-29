@@ -26,11 +26,18 @@ RESERVED_FOR_STX = 0x55
 START_SAMPLE_GROUP = 0x56
 FINISH_UPLOAD = 0x58
 
+DEVICE_TYPES=['Temperature', 'Light', 'Voltage', 'Current', 'PH', 'Oxygen', 'PhotoGate', 'Pulse', 'Force', 'Sound',                     
+'Humidity', 'Pressure', 'Motion', 'Magtnetic', 'Conductivity', 'GSR', 'CO2', 'Barometer', 'Rotary', 
+'Acceleration', 'Spirometer', 'SoilMoisture', 'Turbidity', 'UVB', 'EKG', 'Colorimeter', 'DropCounter', 
+'FlowRate', 'ForcePlate', 'BloodPressure', 'Salinity', 'UVA', 'SurfaceTemp', 'WideRangeTemp', 
+'InfraredThermometer', 'Respiration', 'HandDynamometer', 'Calcium', 'Chloride', 'Ammonium', 'Nitrate', 
+'Anemometer', 'GPS', 'Gyroscope', 'DewPoint', 'Charge']
+
 def bcd(l):
     if [255, 255, 255] == l: return '-'
     num = ''
     for i in l:
-        t = i / 16
+        t = i // 16
         if 10 == t: t = '.'
         elif 11 == t: t = '+'
         elif 12 == t: t = '-'
@@ -156,9 +163,10 @@ class Device(serial.Serial):
 
     def getSensorsData(self, stype, sid):
         if self.status != 'connected': return False
+        if isinstance(stype, str):
+            stype = DEVICE_TYPES.index(stype) + 1
         self.send(bytes([STX, stype, sid, IN_READ, 0, 0, 0]), True)
         r = self.receive()
-        print(r)
         if not r or STX != r[0] or IN_READ != r[3]: return False
         if r[-1] != sum(r[:-1]) % 256: return False
         return bcd(r[4:7])
@@ -204,14 +212,14 @@ class Device(serial.Serial):
 
             # Sensor options
             if online:
-                self.eewrite(stype, sid, chr(2), chr(rate / 256))
+                self.eewrite(stype, sid, chr(2), chr(rate // 256))
                 self.eewrite(stype, sid, chr(3), chr(rate % 256))
                 self.eewrite(stype, sid, chr(4), chr(timebase))
                 self.eewrite(stype, sid, chr(5), chr(0))
                 self.eewrite(stype, sid, chr(6), chr(0))
                 self.eewrite(stype, sid, chr(7), chr(0))
                 self.eewrite(stype, sid, chr(8), chr(0))
-                self.eewrite(stype, sid, chr(9), chr(samples / 256))
+                self.eewrite(stype, sid, chr(9), chr(samples // 256))
                 self.eewrite(stype, sid, chr(10), chr(samples % 256))
                 self.eewrite(stype, sid, chr(12), chr(fast))
 
@@ -288,4 +296,4 @@ def detect_device():
 if __name__ == '__main__':
     d = detect_device()
     print(d.connect())
-    print(d.getSensorsData(36, 1))
+    print(d.getSensorsData('Respiration', 1))
