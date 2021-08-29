@@ -2,28 +2,29 @@ import serial
 import platform
 import time
 import os
+from serial.tools.list_ports import comports
 
-MAX_TYPE = chr(34)
-MAX_ID = chr(9)
-ACK = chr(11)
-STX_4SAMP = chr(17)
-STX_USB = chr(18)
-USB_LEARN = chr(96)
-WRITE_TO_EE = chr(45)
-START_SAMPLE = chr(46)
-STOP_SAMPLE = chr(47)
-IN_READ = chr(49)
-READ_PARAMETERS = chr(50)
-READ_RAM = chr(53)
-SEN_LIST = chr(71)
-EXP_SAMPLES = chr(73)
-EXP_TRIGGER = chr(74)
-TX_4_EE = chr(78)
-START_UPLOAD = chr(83)
-STX = chr(85)
-RESERVED_FOR_STX = chr(85)
-START_SAMPLE_GROUP = chr(86)
-FINISH_UPLOAD = chr(88)
+MAX_TYPE = 0x22
+MAX_ID = 0x09
+ACK = 0x0b
+STX_4SAMP = 0x11
+STX_USB = 0x12
+USB_LEARN = 0x60
+WRITE_TO_EE = 0x2d
+START_SAMPLE = 0x2e
+STOP_SAMPLE = 0x2f
+IN_READ = 0x31
+READ_PARAMETERS = 0x32
+READ_RAM = 0x35
+SEN_LIST = 0x47
+EXP_SAMPLES = 0x49
+EXP_TRIGGER = 0x4a
+TX_4_EE = 0x4e
+START_UPLOAD = 0x53
+STX = 0x55
+RESERVED_FOR_STX = 0x55
+START_SAMPLE_GROUP = 0x56
+FINISH_UPLOAD = 0x58
 
 def bcd(l):
     if [255, 255, 255] == l: return '-'
@@ -73,12 +74,10 @@ class Device(serial.Serial):
 
     def send(self, s, checksum = False):
         time.sleep(0.02)
-        self.flushInput()
-        self.flushOutput()
-        for c in s:
-            self.write(c)
         if checksum:
-            self.write(chr(sum([ord(c) for c in s]) % 256))
+            s += bytes([sum(s)%256])
+        self.write(s)
+        self.flush()
 
     def receive(self, i = False):
         time.sleep(0.02)
@@ -88,22 +87,22 @@ class Device(serial.Serial):
             #print "reading %i out of %i" % (i, iw)
             r = self.read(i)
             return r
-        return 'False'
+        return False
 
     def connect(self):
         self.close()
         self.open()
-        self.send(STX + 'NeuLog!')
-        if 'OK-V' != self.receive(4): return False
+        self.send(bytes([STX]) + b'NeuLog!')
+        if b'OK-V' != self.receive(4): return False
         self.status = 'connected'
-        return '.'.join([str(ord(c)) for c in self.receive(3)])
+        return '.'.join([str(c) for c in self.receive(3)])
 
     def scanStart(self):
         if self.status != 'connected': return False
-        self.send(STX_USB + USB_LEARN + MAX_TYPE + MAX_ID, True)
+        self.send(bytes([STX_USB, USB_LEARN, MAX_TYPE, MAX_ID]), True)
         r = self.receive(4)
-        print "What's this: %i" % (ord(r[-1]))
-        if STX_USB + USB_LEARN + ACK == r[:-1]:
+        print("What's this: %i" % (r[-1]))
+        if bytes([STX_USB, USB_LEARN, ACK]) == r[:-1]:
             self.status = 'scanning'
             return True
         return False
@@ -115,7 +114,7 @@ class Device(serial.Serial):
         while len(r) > 7:
             chunk, r = r[:8], r[8:]
             if STX != chunk[0]: continue
-            chunk = [ord(c) for c in chunk]
+            chunk = [c for c in chunk]
             if chunk[-1] != sum(chunk[:-1]) % 256: continue
             stype, sid, ssndver = chunk[1:4]
             sver = '.'.join([str(i) for i in chunk[4:7]])
@@ -124,26 +123,26 @@ class Device(serial.Serial):
 
     def scanStop(self):
         if self.status != 'scanning': return False
-        self.send(STX_USB)
+        self.send(bytes([STX_USB]))
         self.receive()
         self.status = 'connected'
         return True
 
     def eeread(self, stype, sid, add):
         if self.status[:7] == 'running': return False
-        self.send(STX + stype + sid + READ_PARAMETERS + chr(0) + add + chr(0), True)
+        self.send(bytes([STX, stype, sid, READ_PARAMETERS, 0, add, 0]), True)
         t = self.receive()
-        if t[0:4] != STX + stype + sid + READ_PARAMETERS:
+        if t[0:4] != bytes([STX, stype, sid, READ_PARAMETERS]):
             #FIXME This sometimes returns nothing
-            print 'Did not get response from eeread, will keep on trying'
+            print('Did not get response from eeread, will keep on trying')
             return self.eeread(stype, sid, add)
             raise Exception('Sensor did not acknowledge');
-        return [ord(c) for c in t[4:7]]
+        return [c for c in t[4:7]]
 
     def eewrite(self, stype, sid, add, val):
         if self.status[:7] == 'running': return False
-        self.send(STX + stype + sid + WRITE_TO_EE + chr(0) + add + val, True)
-        if self.receive()[0:5] != STX + stype + sid + WRITE_TO_EE + ACK:
+        self.send(bytes([STX, stype, sid, WRITE_TO_EE, 0, add, val]), True)
+        if self.receive()[0:5] != bytes([STX, stype, sid, WRITE_TO_EE, ACK]):
             raise Exception('Sensor did not acknowledge');
 
     def getSensorRange(self, stype, sid):
@@ -157,17 +156,17 @@ class Device(serial.Serial):
 
     def getSensorsData(self, stype, sid):
         if self.status != 'connected': return False
-        self.send(STX + chr(stype) + chr(sid) + IN_READ + (3 * chr(0)), True)
+        self.send(bytes([STX, stype, sid, IN_READ, 0, 0, 0]), True)
         r = self.receive()
+        print(r)
         if not r or STX != r[0] or IN_READ != r[3]: return False
-        r = [ord(c) for c in r]
         if r[-1] != sum(r[:-1]) % 256: return False
         return bcd(r[4:7])
 
     def expStart(self, rate, timebase, samples, sensors, online):
         if self.status != 'connected': return False
         self.status = 'preparing'
-        self.send(STX + (2 * chr(0)) + STOP_SAMPLE + (3 * chr(0)), True)
+        self.send(bytes([STX, 0, 0, STOP_SAMPLE, 0, 0, 0]), True)
 
         if 2 == timebase: fast = 1
         else: fast = 0
@@ -195,8 +194,8 @@ class Device(serial.Serial):
             sid = chr(s[1]);
 
             # Sensor list
-            self.send(STX_USB + SEN_LIST + chr(i) + stype + sid + chr(1), True)
-            if self.receive()[0:4] != STX_USB + SEN_LIST + chr(i) + ACK:
+            self.send(bytes([STX_USB, SEN_LIST, i, stype, sid, 1]), True)
+            if self.receive()[0:4] != bytes([STX_USB, SEN_LIST, i, ACK]):
                 raise Exception('Sensor did not acknowledge');
             i += 1
 
@@ -216,21 +215,21 @@ class Device(serial.Serial):
                 self.eewrite(stype, sid, chr(10), chr(samples % 256))
                 self.eewrite(stype, sid, chr(12), chr(fast))
 
-        self.send(STX_USB + EXP_SAMPLES + chr(samples / 256) + chr(samples % 256), True)
-        if self.receive()[0:3] != STX_USB + EXP_SAMPLES + ACK:
+        self.send(bytes([STX_USB, EXP_SAMPLES, samples // 256, samples % 256]), True)
+        if self.receive()[0:3] != bytes([STX_USB, EXP_SAMPLES, ACK]):
             raise Exception('Sensor did not acknowledge');
 
         if online:
-            self.send(STX_USB + EXP_TRIGGER + (7 * chr(0)), True)
-            if self.receive()[0:3] != STX_USB + EXP_TRIGGER + ACK:
+            self.send(bytes([STX_USB, EXP_TRIGGER] + [0] * 7), True)
+            if self.receive()[0:3] != bytes([STX_USB, EXP_TRIGGER, ACK]):
                 raise Exception('Sensor did not acknowledge');
-            self.send(STX_USB + START_SAMPLE, True)
-            if self.receive(4)[0:3] != STX_USB + START_SAMPLE + ACK:
+            self.send(bytes([STX_USB, START_SAMPLE]), True)
+            if self.receive(4)[0:3] != bytes([STX_USB, START_SAMPLE, ACK]):
                 raise Exception('Sensor did not acknowledge');
             self.status = 'runningOnline'
         else:
-            self.send(STX_USB + START_UPLOAD, True)
-            if self.receive(4)[0:3] != STX_USB + START_UPLOAD + ACK:
+            self.send(bytes([STX_USB, START_UPLOAD]), True)
+            if self.receive(4)[0:3] != bytes([STX_USB, START_UPLOAD, ACK]):
                 raise Exception('Sensor did not acknowledge');
             self.status = 'runningOffline'
 
@@ -238,7 +237,7 @@ class Device(serial.Serial):
 
     def expStop(self):
         if self.status[:7] != 'running': return False
-        self.send(STX + (2 * chr(0)) + STOP_SAMPLE + (3 * chr(0)), True)
+        self.send(bytes([STX, 0, 0, STOP_SAMPLE, 0, 0, 0]), True)
         self.status = 'connected'
         return True
 
@@ -253,77 +252,40 @@ class Device(serial.Serial):
                 self.status = 'connected'
                 samples.append('done')
             else:
-                print 'USB said: ', [ord(c) for c in self.buf]
+                print('USB said: ', self.buf)
             self.buf = self.buf[4:]
 
         while len(self.buf) > 18 and len(samples) < 100:
             if self.buf[0] == STX_4SAMP and self.buf[3] == TX_4_EE:
-                stype = ord(self.buf[1])
-                sid = ord(self.buf[2])
-                dat = [bcd([ord(c) for c in self.buf[i:i+3]]) for i in range(6, 16, 3)]
+                stype = self.buf[1]
+                sid = self.buf[2]
+                dat = [bcd([c for c in self.buf[i:i+3]]) for i in range(6, 16, 3)]
                 samples.append([stype, sid, dat])
 
                 self.buf = self.buf[19:]
             elif self.buf[0] == STX and self.buf[3] == READ_RAM:
-                stype = ord(self.buf[1])
-                sid = ord(self.buf[2])
-                dat = bcd([ord(c) for c in self.buf[4:7]])
+                stype = self.buf[1]
+                sid = self.buf[2]
+                dat = bcd([c for c in self.buf[4:7]])
                 updates.append([stype, sid, dat])
                 self.buf = self.buf[8:]
             else:
-                print "!!LOST %i" % (ord(self.buf[0]))
+                print("!!LOST %i" % (self.buf[0]))
                 self.buf = self.buf[1:]
 
         return [samples, updates]
 
-def scan():
-    # scan for available ports. return a list of tuples (num, name)
-    if platform.system() == "Darwin":
-        import glob
-        return glob.glob('/dev/tty.S*')
-    else:
-
-        available = []
-        for i in range(256):
-            try:
-                s = serial.Serial(i)
-                available.append( s.portstr)
-                s.close()
-            except serial.SerialException:
-                pass
-        return available
-
 def detect_device():
-    ports = scan()
-    for port in ports:
-        d = Device(port = port)
+    for ser in comports():
+        d = Device(port=ser.device)
         try:
-            #d = float(d.getSensorsData(16,1))
             if d.connect():
-                return port
+                return d
         except:
             pass
-
-
-class gsr(object):
-
-    def __init__(self, unit = False):
-        self.unit = unit
-        self.factor = (2**16)/10. 
-        self.device = Device()
-        t = time.time()
-        while not self.device.connect(): 
-            if time.time() - t > 2:
-                break
-
-    def get_data(self):
-        x = float(self.device.getSensorsData(16,1))
-        if self.unit:
-            return x*self.factor
-        else:
-            return x
+    return None
 
 if __name__ == '__main__':
-    d = gsr()
-    while True:
-        print d.get_data()
+    d = detect_device()
+    print(d.connect())
+    print(d.getSensorsData(36, 1))
