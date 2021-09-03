@@ -81,14 +81,14 @@ class Device(serial.Serial):
         """
 
     def send(self, s, checksum = False):
-        time.sleep(0.02)
+        # time.sleep(0.02)
         if checksum:
             s += bytes([sum(s)%256])
         self.write(s)
         self.flush()
 
     def receive(self, i = False):
-        time.sleep(0.02)
+        # time.sleep(0.02)
         iw = self.inWaiting()
         if False == i: i = iw
         if iw >= i:
@@ -317,4 +317,13 @@ def detect_device():
 if __name__ == '__main__':
     d = detect_device()
     print(d.connect())
-    print(d.getSensorsData('Respiration', 1))
+    start = time.time()
+    cnt = 0
+    while True:
+        v = d.getSensorsData('Respiration', 1)
+        print(' ' * 20, end='\r')
+        print(v, end='\r', flush=True)
+        cnt += 1
+        if time.time() - start >= 10:
+            break
+    print(cnt / 10)
